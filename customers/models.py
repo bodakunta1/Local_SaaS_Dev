@@ -4,6 +4,50 @@ from django.utils import timezone
 
 # Create your models here.
 
+
+class Plan(models.Model):
+    """
+    Master list of subscription plans (Basic / Standard / Premium).
+    Lives in the public schema via the `customers` app.
+    """
+    code = models.CharField(
+        max_length=50,
+        unique=True,
+        help_text="Internal code, e.g. 'basic', 'standard', 'premium'."
+    )
+    name = models.CharField(
+        max_length=100,
+        help_text="Display name shown to tenants."
+    )
+    description = models.TextField(blank=True)
+
+    # Pricing
+    monthly_price = models.DecimalField(max_digits=10, decimal_places=2)
+    yearly_price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Optional yearly price if you offer yearly billing."
+    )
+    currency = models.CharField(max_length=10, default="INR")
+
+    # Feature limits (you can extend as needed)
+    max_products = models.PositiveIntegerField(null=True, blank=True)
+    max_orders_per_month = models.PositiveIntegerField(null=True, blank=True)
+    max_staff_users = models.PositiveIntegerField(null=True, blank=True)
+    max_storage_mb = models.PositiveIntegerField(null=True, blank=True)
+
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["monthly_price"]
+
+    def __str__(self):
+        return f"{self.name} ({self.currency} {self.monthly_price}/month)"
+
+
+
 class Client(TenantMixin):
     # Tenant Info 
     tenant_name = models.CharField(max_length=100)
@@ -20,6 +64,15 @@ class Client(TenantMixin):
     address=models.TextField(null=True,blank=True)
     logo=models.ImageField(upload_to='tenant_logos/', null=True, blank=True)
 
+    plan = models.ForeignKey(
+        Plan, 
+        on_delete=models.PROTECT,
+        related_name="tenants",
+        null=True,
+        blank=True,
+        help_text="Current active subscription plan for this tenant."
+    )
+
     #  Subscription 
     PLAN_TYPE_CHOICES=[
         ('Basic','Basic'),
@@ -27,12 +80,26 @@ class Client(TenantMixin):
         ('Premium','Premium')
     ]
     plan_type = models.CharField(max_length=50,choices=PLAN_TYPE_CHOICES,default='Basic')
-    subscription_start = models.DateField(auto_now_add=True)
-    subscription_end = models.DateField(null=True, blank=True)
+    subscription_start = models.DateField(
+        auto_now_add=True
+        )
+    subscription_end = models.DateField(
+        null=True, 
+        blank=True
+        )
+
+    on_trial = models.BooleanField(default=False)
+
+    trial_end = models.DateField(
+        null=True,
+        blank=True,
+        help_text="If on_trial = True, Trial ends this date."
+    )
 
     STATUS_CHOICES = [
         ('Active', 'Active'),
         ('Suspended', 'Suspended'),
+        ("Cancelled", "cancelled"),
     ]
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Active')
 
@@ -72,6 +139,19 @@ class Client(TenantMixin):
 
     def __str__(self):
         return self.tenant_name
+    
+    def has_active_subcription(self) -> bool:
+        """ Return True if subcription_end is in future. """
+        if self.subscription_end is None:
+            return False
+        return self.subscription_end >= timezone.now().date()
+    
+    def is_on_trial(self) -> bool:
+        """ Return True if tenant is currently in trial period. """
+        if not self.on_trial or self.trial_end is None:
+            return False
+        return self.trial_end >= timezone.now().date()
+    
     
 class Domain(DomainMixin):
     pass
